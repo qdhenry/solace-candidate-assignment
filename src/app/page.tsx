@@ -294,6 +294,7 @@ function PageContent() {
                   <line x1="16.65" y1="16.65" x2="21" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                 </svg>
                 <input
+                  id="search"
                   type="text"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
