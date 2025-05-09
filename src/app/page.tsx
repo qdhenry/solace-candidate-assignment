@@ -10,14 +10,7 @@ import formatPhoneNumber from "@/utils/helpers";
 // shadcn/ui components
 
 // Main fields for sorting
-const SORT_FIELDS = [
-  { value: "firstName", label: "First Name" },
-  { value: "lastName", label: "Last Name" },
-  { value: "city", label: "City" },
-  { value: "degree", label: "Degree" },
-  { value: "yearsOfExperience", label: "Years of Experience" },
-  { value: "createdAt", label: "Created At" },
-];
+import { SORT_FIELDS, SPECIALTY_OPTIONS } from "@/db/constants";
 
 export default function Home() {
   // Next.js router and search params
@@ -45,7 +38,8 @@ export default function Home() {
   const [name, setName] = useState(() => searchParams.get("name") || "");
   const [city, setCity] = useState(() => searchParams.get("city") || "");
   const [degree, setDegree] = useState(() => searchParams.get("degree") || "");
-  const [sort, setSort] = useState(() => searchParams.get("sort") || "createdAt");
+  const [selectedSpecialty, setSelectedSpecialty] = useState(() => searchParams.get("specialty") || "");
+  const [sort, setSort] = useState(() => searchParams.get("sort") || "firstName"); // Default to firstName
   const [order, setOrder] = useState<"asc" | "desc">(
     searchParams.get("order") === "asc" ? "asc" : "desc"
   );
@@ -54,7 +48,8 @@ export default function Home() {
   const limit = 10;
 
   // Debounce ref
-  const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimeout = useRef<NodeJS.Timeout | null>(null); // For existing filter/sort/page changes
+  const searchDebounceTimeoutRef = useRef<NodeJS.Timeout | null>(null); // For reactive search input
 
   // Helper: update URL query params
   const updateQueryParams = (params: Record<string, string | number | undefined>) => {
@@ -75,6 +70,7 @@ export default function Home() {
     name: string;
     city: string;
     degree: string;
+    specialty?: string; // Added specialty
     sort: string;
     order: "asc" | "desc";
   }>) => {
@@ -83,6 +79,7 @@ export default function Home() {
       "name" in updates ||
       "city" in updates ||
       "degree" in updates ||
+      "specialty" in updates || // Added specialty
       "sort" in updates ||
       "order" in updates;
     const newPage = resetPage ? 1 : updates.page ?? page;
@@ -90,13 +87,15 @@ export default function Home() {
     if ("name" in updates) setName(updates.name ?? "");
     if ("city" in updates) setCity(updates.city ?? "");
     if ("degree" in updates) setDegree(updates.degree ?? "");
-    if ("sort" in updates) setSort(updates.sort ?? "createdAt");
+    if ("specialty" in updates) setSelectedSpecialty(updates.specialty ?? ""); // Added specialty
+    if ("sort" in updates) setSort(updates.sort ?? "firstName"); // Default to firstName
     if ("order" in updates) setOrder(updates.order ?? "desc");
     updateQueryParams({
       page: newPage,
       name: updates.name ?? name,
       city: updates.city ?? city,
       degree: updates.degree ?? degree,
+      specialty: updates.specialty ?? selectedSpecialty, // Added specialty
       sort: updates.sort ?? sort,
       order: updates.order ?? order,
     });
@@ -115,6 +114,7 @@ export default function Home() {
     if (name) params.append("name", name);
     if (city) params.append("city", city);
     if (degree) params.append("degree", degree);
+    if (selectedSpecialty) params.append("specialty", selectedSpecialty); // Added specialty
 
     fetch(`/api/advocates?${params.toString()}`)
       .then(async (res) => {
@@ -149,7 +149,45 @@ export default function Home() {
       fetchAdvocates();
     }, 400);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, name, city, degree, sort, order]);
+  }, [page, name, city, degree, selectedSpecialty, sort, order]); // Added selectedSpecialty
+
+  // New useEffect for reactive search input
+  useEffect(() => {
+    if (searchDebounceTimeoutRef.current) {
+      clearTimeout(searchDebounceTimeoutRef.current);
+    }
+    searchDebounceTimeoutRef.current = setTimeout(() => {
+      const trimmedSearch = search.trim();
+      if (trimmedSearch.length > 2) {
+        const [n, c, d] = trimmedSearch.split(" ");
+        // Only update if the parsed values differ from current state to avoid unnecessary re-renders/fetches
+        // or if the search term itself has meaningfully changed the filter intent.
+        // For simplicity here, we'll update if the search term is long enough.
+        // A more sophisticated check might compare n, c, d with current name, city, degree.
+        setFilterState({
+          name: n || undefined, // Use undefined to clear if not present
+          city: c || undefined,
+          degree: d || undefined,
+        });
+      } else {
+        // If search is short, clear the name, city, degree filters if they are currently set
+        if (name || city || degree) {
+          setFilterState({
+            name: undefined,
+            city: undefined,
+            degree: undefined,
+          });
+        }
+      }
+    }, 500); // 500ms debounce for search input
+
+    return () => {
+      if (searchDebounceTimeoutRef.current) {
+        clearTimeout(searchDebounceTimeoutRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]); // Only re-run when the main 'search' state changes
 
   // Sync state with URL on mount (for back/forward navigation)
   useEffect(() => {
@@ -159,7 +197,8 @@ export default function Home() {
     if ((searchParams.get("name") || "") !== name) setName(searchParams.get("name") || "");
     if ((searchParams.get("city") || "") !== city) setCity(searchParams.get("city") || "");
     if ((searchParams.get("degree") || "") !== degree) setDegree(searchParams.get("degree") || "");
-    if ((searchParams.get("sort") || "createdAt") !== sort) setSort(searchParams.get("sort") || "createdAt");
+    if ((searchParams.get("specialty") || "") !== selectedSpecialty) setSelectedSpecialty(searchParams.get("specialty") || "");
+    if ((searchParams.get("sort") || "firstName") !== sort) setSort(searchParams.get("sort") || "firstName"); // Default to firstName
     if ((searchParams.get("order") || "desc") !== order) setOrder(
       searchParams.get("order") === "asc" ? "asc" : "desc"
     );
@@ -169,6 +208,9 @@ export default function Home() {
   // Handlers for filter/sort controls
   const handleInput = (key: "name" | "city" | "degree") => (e: React.ChangeEvent<HTMLInputElement>) => {
     setFilterState({ [key]: e.target.value });
+  };
+  const handleSpecialtyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setFilterState({ specialty: e.target.value });
   };
   // Fuzzy search handler: parse input and update fields
   const handleFuzzySearch = (e: React.FormEvent<HTMLFormElement>) => {
@@ -190,11 +232,13 @@ export default function Home() {
     setFilterState({ order: e.target.value as "asc" | "desc" });
   };
   const handleReset = () => {
+    setSearch(""); // Clear the main search bar as well
     setFilterState({
       name: "",
       city: "",
       degree: "",
-      sort: "createdAt",
+      specialty: "", // Reset specialty
+      sort: "firstName", // Default to firstName
       order: "desc",
       page: 1,
     });
@@ -315,37 +359,58 @@ export default function Home() {
           </div>
           {/* Filters and sort controls */}
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-            <div className="flex flex-row gap-4 items-end">
+            <div className="flex flex-row justify-between items-end"> {/* Changed to justify-between */}
+              {/* Specialty Filter Dropdown */}
               <div>
-                <label htmlFor="sort" className="block text-sm font-medium text-text-color-secondary mb-1">
-                  Sort By
+                <label htmlFor="specialty" className="block text-sm font-medium text-text-color-secondary mb-1">
+                  Filter by Specialty
                 </label>
                 <select
-                  id="sort"
+                  id="specialty"
                   className="border border-solace-green rounded-md px-2 py-2"
-                  value={sort}
-                  onChange={handleSort}
-                  aria-label="Sort by"
+                  value={selectedSpecialty}
+                  onChange={handleSpecialtyChange}
+                  aria-label="Filter by specialty"
                 >
-                  {SORT_FIELDS.map((f) => (
-                    <option key={f.value} value={f.value}>{f.label}</option>
+                  {SPECIALTY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="order" className="block text-sm font-medium text-text-color-secondary mb-1">
-                  Order
-                </label>
-                <select
-                  id="order"
-                  className="border border-solace-green rounded-md px-2 py-2"
-                  value={order}
-                  onChange={handleOrder}
-                  aria-label="Sort order"
-                >
-                  <option value="asc">Asc</option>
-                  <option value="desc">Desc</option>
-                </select>
+
+              {/* Sort and Order Controls Group - Pushed to the right */}
+              <div className="flex flex-row gap-4 items-end">
+                <div>
+                  <label htmlFor="sort" className="block text-sm font-medium text-text-color-secondary mb-1">
+                    Sort By
+                  </label>
+                  <select
+                    id="sort"
+                    className="border border-solace-green rounded-md px-2 py-2"
+                    value={sort}
+                    onChange={handleSort}
+                    aria-label="Sort by"
+                  >
+                    {SORT_FIELDS.map((f) => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="order" className="block text-sm font-medium text-text-color-secondary mb-1">
+                    Order
+                  </label>
+                  <select
+                    id="order"
+                    className="border border-solace-green rounded-md px-2 py-2"
+                    value={order}
+                    onChange={handleOrder}
+                    aria-label="Sort order"
+                  >
+                    <option value="asc">Asc</option>
+                    <option value="desc">Desc</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
@@ -399,10 +464,10 @@ export default function Home() {
                       tabIndex={0}
                       onClick={() => setFilterState({ sort: "lastName", order: sort === "lastName" && order === "asc" ? "desc" : "asc" })}
                       onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setFilterState({ sort: "lastName", order: sort === "lastName" && order === "asc" ? "desc" : "asc" }); }}
-                      aria-label="Sort by Last Name"
+                      aria-label="Sort by City"
                     >
-                      Last Name
-                      {sort === "lastName" && (
+                      City
+                      {sort === "city" && (
                         <span aria-hidden="true" className="ml-1">{order === "asc" ? "▲" : "▼"}</span>
                       )}
                     </th>

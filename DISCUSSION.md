@@ -17,16 +17,18 @@
 # Performance Improvements
 
 - Added debouncing to search
-- Added server side pagination
+- Added server side pagination to database query
 
 # Future Improvements
 
+- add tests for frontend and backend
 - componetize the AdvocateList table
 - componetize the search functionality
 - componetize the pagination functionality
 - Add loading states
 - Add error states and user readable error messages
 - Apply state machine to search and pagination
+- complete the implementation of the Specialties filter functionality
 - Convert specialties and degrees into enums for better type safety
 - improve table design for mobile
 - add image for advocates

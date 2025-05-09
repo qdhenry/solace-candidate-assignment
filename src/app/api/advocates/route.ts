@@ -1,6 +1,6 @@
 import db from "../../../db";
 import { advocates } from "../../../db/schema";
-import { and, or, asc, desc, count, ilike, SQL, sql } from "drizzle-orm"; // Added sql import
+import { and, or, asc, desc, count, ilike, SQL, sql } from "drizzle-orm"; // Added sql import and arrayContains
 
 
 export async function GET(request: Request) {
@@ -15,9 +15,10 @@ export async function GET(request: Request) {
   const name = searchParams.get("name");
   const city = searchParams.get("city");
   const degree = searchParams.get("degree");
+  const specialty = searchParams.get("specialty"); // Read specialty parameter
 
   // Sorting
-  const sort = searchParams.get("sort") || "createdAt";
+  const sort = searchParams.get("sort") || "city"; // Default to firstName
   const order = (searchParams.get("order") || "desc").toLowerCase() === "asc" ? "asc" : "desc";
 
   // Build WHERE clause conditions
@@ -41,23 +42,35 @@ export async function GET(request: Request) {
   if (degree) {
     whereConditions.push(ilike(advocates.degree, `%${degree}%`));
   }
+  if (specialty) {
+    // Case-insensitive check if the jsonb array 'specialties' contains the given 'specialty' string.
+    // This uses a subquery with jsonb_array_elements_text to unnest the array,
+    // converts both the unnested element and the input specialty to lowercase, and checks for equality.
+    whereConditions.push(
+      sql`EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(${advocates.specialties}) AS elem
+        WHERE lower(elem) = lower(${specialty})
+      )`
+    );
+  }
 
   const finalWhereCondition = whereConditions.length > 0 ? and(...whereConditions) : undefined;
 
   // Sorting
   // Map API sort parameters to database columns
-  const sortColumnMap: Record<string, typeof advocates.id | typeof advocates.firstName | typeof advocates.lastName | typeof advocates.city | typeof advocates.degree | typeof advocates.createdAt | typeof advocates.yearsOfExperience> = {
+  const sortColumnMap: Record<string, typeof advocates.id | typeof advocates.firstName | typeof advocates.lastName | typeof advocates.city | typeof advocates.degree | typeof advocates.yearsOfExperience> = { // Removed advocates.createdAt
     id: advocates.id,
     firstName: advocates.firstName,
     lastName: advocates.lastName,
     city: advocates.city,
     degree: advocates.degree,
-    createdAt: advocates.createdAt,
+    // createdAt: advocates.createdAt, // Removed
     yearsOfExperience: advocates.yearsOfExperience,
   };
 
-  // Validate sort parameter and select column, default to 'createdAt'
-  const sortFieldKey = Object.keys(sortColumnMap).includes(sort) ? sort : "createdAt";
+  // Validate sort parameter and select column, default to 'firstName'
+  const sortFieldKey = Object.keys(sortColumnMap).includes(sort) ? sort : "city"; // Default to firstName
   const columnToSort = sortColumnMap[sortFieldKey];
   let orderByCondition;
 
@@ -88,14 +101,20 @@ export async function GET(request: Request) {
     findManyOptions.where = effectiveWhereCondition;
   }
 
-  const paginatedData = await db.query.advocates.findMany(findManyOptions);
+  const paginatedData = await db.query.advocates.findMany(findManyOptions).catch((error) => {
+    console.error("Error fetching paginated data:", error);
+    return [];
+  });
 
   // Fetch total count for pagination using the standard select/count approach
   const baseCountQuery = db.select({ value: count() }).from(advocates);
   const countQuery = effectiveWhereCondition
     ? baseCountQuery.where(effectiveWhereCondition)
     : baseCountQuery;
-  const totalResult = await countQuery;
+  const totalResult = await countQuery.catch((error) => {
+    console.error("Error fetching total count:", error);
+    return [{ value: 0 }];
+  });
   const total = totalResult[0]?.value || 0;
   const totalPages = Math.ceil(total / limit);
 

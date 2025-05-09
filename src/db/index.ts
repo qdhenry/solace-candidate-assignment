@@ -14,14 +14,14 @@ const setup = (): AppDb => { // Explicitly type the return value of setup
       query: {
         advocates: {
           findMany: async (_options: any) => [], // Mocked findMany
-          count: async (_options: any) => ({ count: 0 }),  // Mocked count
+          count: async (_options: any) => ({ count: 0 }), // Mocked count
         },
         // Mock other tables from schema if necessary for fallback paths
       },
       // Mock other top-level db methods like select, insert, etc., if used by fallback paths
       select: (() => ({ from: (() => Promise.resolve([])) })) as any, // Minimal mock for select chain
       // Add other necessary methods like insert, update, delete if they are part of AppDb and used
-    } as AppDb;
+    } as unknown as AppDb;
   }
 
   const queryClient = postgres(process.env.DATABASE_URL);
