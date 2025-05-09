@@ -24,7 +24,8 @@ const setup = (): AppDb => { // Explicitly type the return value of setup
     } as unknown as AppDb;
   }
 
-  const queryClient = postgres(process.env.DATABASE_URL);
+  const queryClient = postgres(process.env.DATABASE_URL, { ssl: 'verify-full' });
+
   // Explicitly type the db constant with AppDb and pass the schema
   const db: AppDb = drizzle(queryClient, { schema });
   return db;
