@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { advocates } from "@/db/schema";
 
@@ -13,7 +13,7 @@ import { updateQueryParams, fetchAdvocatesAPI, type Advocate } from "@/utils/adv
 // Main fields for sorting
 import { SORT_FIELDS, SPECIALTY_OPTIONS } from "@/db/constants";
 
-export default function Home() {
+function PageContent() {
   // Next.js router and search params
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -592,5 +592,13 @@ export default function Home() {
         </div>
       </main>
     </>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={<div>Loading page content...</div>}> {/* You can use a more sophisticated loader here */}
+      <PageContent />
+    </Suspense>
   );
 }
