@@ -3,10 +3,11 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { advocates } from "@/db/schema";
-type Advocate = typeof advocates.$inferSelect;
 
 import Header from "./Header";
 import formatPhoneNumber from "@/utils/helpers";
+import { updateQueryParams, fetchAdvocatesAPI, type Advocate } from "@/utils/advocateUtils"; // Added fetchAdvocatesAPI and Advocate type
+
 // shadcn/ui components
 
 // Main fields for sorting
@@ -51,19 +52,6 @@ export default function Home() {
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null); // For existing filter/sort/page changes
   const searchDebounceTimeoutRef = useRef<NodeJS.Timeout | null>(null); // For reactive search input
 
-  // Helper: update URL query params
-  const updateQueryParams = (params: Record<string, string | number | undefined>) => {
-    const current = new URLSearchParams(searchParams.toString());
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === "" || value === null) {
-        current.delete(key);
-      } else {
-        current.set(key, String(value));
-      }
-    });
-    router.replace(`?${current.toString()}`);
-  };
-
   // Unified state update for filters/sort/page, always updates URL
   const setFilterState = (updates: Partial<{
     page: number;
@@ -90,7 +78,9 @@ export default function Home() {
     if ("specialty" in updates) setSelectedSpecialty(updates.specialty ?? ""); // Added specialty
     if ("sort" in updates) setSort(updates.sort ?? "firstName"); // Default to firstName
     if ("order" in updates) setOrder(updates.order ?? "desc");
-    updateQueryParams({
+
+    // Use the new utility function
+    const newQueryString = updateQueryParams(searchParams, {
       page: newPage,
       name: updates.name ?? name,
       city: updates.city ?? city,
@@ -99,47 +89,36 @@ export default function Home() {
       sort: updates.sort ?? sort,
       order: updates.order ?? order,
     });
+    router.replace(`?${newQueryString}`);
   };
 
   // Fetch advocates from API with error handling
-  const fetchAdvocates = () => {
+  const fetchAdvocates = async () => {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams({
-      page: page.toString(),
-      limit: limit.toString(),
+
+    const result = await fetchAdvocatesAPI({
+      page,
+      limit, // limit is a constant (10) in this component
       sort,
       order,
+      name: name || undefined,
+      city: city || undefined,
+      degree: degree || undefined,
+      specialty: selectedSpecialty || undefined,
     });
-    if (name) params.append("name", name);
-    if (city) params.append("city", city);
-    if (degree) params.append("degree", degree);
-    if (selectedSpecialty) params.append("specialty", selectedSpecialty); // Added specialty
 
-    fetch(`/api/advocates?${params.toString()}`)
-      .then(async (res) => {
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || "Failed to fetch advocates.");
-        }
-        return res.json();
-      })
-      .then((json) => {
-        setAdvocates(json.data);
-        setTotalPages(json.totalPages);
-        setTotal(json.total);
-      })
-      .catch((err) => {
-        setError(
-          typeof err === "string"
-            ? err
-            : err?.message || "An unknown error occurred while fetching advocates."
-        );
-        setAdvocates([]);
-        setTotalPages(1);
-        setTotal(0);
-      })
-      .finally(() => setLoading(false));
+    if (result.success && result.data) {
+      setAdvocates(result.data.data);
+      setTotalPages(result.data.totalPages);
+      setTotal(result.data.total);
+    } else {
+      setError(result.error || "An unknown error occurred while fetching advocates.");
+      setAdvocates([]);
+      setTotalPages(1);
+      setTotal(0);
+    }
+    setLoading(false);
   };
 
   // Debounced fetch on filter/sort/page change, prevent double-fetching
@@ -205,10 +184,8 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // Handlers for filter/sort controls
-  const handleInput = (key: "name" | "city" | "degree") => (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFilterState({ [key]: e.target.value });
-  };
+
+
   const handleSpecialtyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setFilterState({ specialty: e.target.value });
   };
@@ -521,7 +498,7 @@ export default function Home() {
                       )}
                     </th>
                     <th
-                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light w-[200px]"
+                      className="px-4 py-3 text-left font-semibold text-solace-green bg-solace-green-light w-[200px]"
                       role="columnheader"
                       aria-label="Phone Number"
                     >
@@ -553,12 +530,12 @@ export default function Home() {
                       <td className="px-4 py-3 text-center w-[100px]">
                         <a
                           href={`tel:${advocate.phoneNumber}`}
-                          className="btn-secondary inline-flex items-center justify-center gap-2 text-xs"
+                          className="btn-secondary inline-flex items-center justify-center gap-2"
                           aria-label={`Call ${formatPhoneNumber(advocate.phoneNumber)}`}
                           tabIndex={0}
                         >
                           <span className="whitespace-nowrap font-medium">{formatPhoneNumber(advocate.phoneNumber)}</span>
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-6 text-solace-green">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-6 text-white">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
                           </svg>
                         </a>
@@ -607,7 +584,7 @@ export default function Home() {
                 max={totalPages}
                 value={page}
                 onChange={handlePageInput}
-                className="w-16 border border-solace-green rounded-md px-2 py-1 text-center"
+                className="w-16 border border-solace-green rounded-md px-2 py-1 text-center text-white"
                 disabled={loading || totalPages < 2}
               />
             </div>
