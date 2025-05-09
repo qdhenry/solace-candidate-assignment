@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { advocates } from "@/db/schema";
 type Advocate = typeof advocates.$inferSelect;
 
 import Header from "./Header";
 import formatPhoneNumber from "@/utils/helpers";
+// shadcn/ui components
 
 // Main fields for sorting
 const SORT_FIELDS = [
@@ -18,27 +20,92 @@ const SORT_FIELDS = [
 ];
 
 export default function Home() {
+  // Next.js router and search params
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   // State for API data and UI controls
   const [advocates, setAdvocates] = useState<Advocate[]>([]);
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
+  const [error, setError] = useState<string | null>(null);
+
+  // State initialized from URL query params
+  const [page, setPage] = useState(() => {
+    const p = Number(searchParams.get("page"));
+    return isNaN(p) || p < 1 ? 1 : p;
+  });
+  // Unified fuzzy search input (multi-field)
+  const [search, setSearch] = useState(() => {
+    const n = searchParams.get("name") || "";
+    const c = searchParams.get("city") || "";
+    const d = searchParams.get("degree") || "";
+    // Compose a single string for the search bar
+    return [n, c, d].filter(Boolean).join(" ");
+  });
+  const [name, setName] = useState(() => searchParams.get("name") || "");
+  const [city, setCity] = useState(() => searchParams.get("city") || "");
+  const [degree, setDegree] = useState(() => searchParams.get("degree") || "");
+  const [sort, setSort] = useState(() => searchParams.get("sort") || "createdAt");
+  const [order, setOrder] = useState<"asc" | "desc">(
+    searchParams.get("order") === "asc" ? "asc" : "desc"
+  );
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const limit = 10;
 
-  // Filter/sort state
-  const [name, setName] = useState("");
-  const [city, setCity] = useState("");
-  const [degree, setDegree] = useState("");
-  const [sort, setSort] = useState("createdAt");
-  const [order, setOrder] = useState<"asc" | "desc">("desc");
-
-  // Debounce refs
+  // Debounce ref
   const debounceTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch advocates from API
+  // Helper: update URL query params
+  const updateQueryParams = (params: Record<string, string | number | undefined>) => {
+    const current = new URLSearchParams(searchParams.toString());
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === "" || value === null) {
+        current.delete(key);
+      } else {
+        current.set(key, String(value));
+      }
+    });
+    router.replace(`?${current.toString()}`);
+  };
+
+  // Unified state update for filters/sort/page, always updates URL
+  const setFilterState = (updates: Partial<{
+    page: number;
+    name: string;
+    city: string;
+    degree: string;
+    sort: string;
+    order: "asc" | "desc";
+  }>) => {
+    // If any filter (except page) changes, reset page to 1
+    const resetPage =
+      "name" in updates ||
+      "city" in updates ||
+      "degree" in updates ||
+      "sort" in updates ||
+      "order" in updates;
+    const newPage = resetPage ? 1 : updates.page ?? page;
+    setPage(newPage);
+    if ("name" in updates) setName(updates.name ?? "");
+    if ("city" in updates) setCity(updates.city ?? "");
+    if ("degree" in updates) setDegree(updates.degree ?? "");
+    if ("sort" in updates) setSort(updates.sort ?? "createdAt");
+    if ("order" in updates) setOrder(updates.order ?? "desc");
+    updateQueryParams({
+      page: newPage,
+      name: updates.name ?? name,
+      city: updates.city ?? city,
+      degree: updates.degree ?? degree,
+      sort: updates.sort ?? sort,
+      order: updates.order ?? order,
+    });
+  };
+
+  // Fetch advocates from API with error handling
   const fetchAdvocates = () => {
     setLoading(true);
+    setError(null);
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
@@ -50,16 +117,32 @@ export default function Home() {
     if (degree) params.append("degree", degree);
 
     fetch(`/api/advocates?${params.toString()}`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "Failed to fetch advocates.");
+        }
+        return res.json();
+      })
       .then((json) => {
         setAdvocates(json.data);
         setTotalPages(json.totalPages);
         setTotal(json.total);
       })
+      .catch((err) => {
+        setError(
+          typeof err === "string"
+            ? err
+            : err?.message || "An unknown error occurred while fetching advocates."
+        );
+        setAdvocates([]);
+        setTotalPages(1);
+        setTotal(0);
+      })
       .finally(() => setLoading(false));
   };
 
-  // Debounced fetch on filter/sort/page change
+  // Debounced fetch on filter/sort/page change, prevent double-fetching
   useEffect(() => {
     if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
     debounceTimeout.current = setTimeout(() => {
@@ -68,33 +151,96 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, name, city, degree, sort, order]);
 
-  // Reset page to 1 when filters change
+  // Sync state with URL on mount (for back/forward navigation)
   useEffect(() => {
-    setPage(1);
+    // Only update state if URL params differ from state
+    const urlPage = Number(searchParams.get("page")) || 1;
+    if (urlPage !== page) setPage(urlPage);
+    if ((searchParams.get("name") || "") !== name) setName(searchParams.get("name") || "");
+    if ((searchParams.get("city") || "") !== city) setCity(searchParams.get("city") || "");
+    if ((searchParams.get("degree") || "") !== degree) setDegree(searchParams.get("degree") || "");
+    if ((searchParams.get("sort") || "createdAt") !== sort) setSort(searchParams.get("sort") || "createdAt");
+    if ((searchParams.get("order") || "desc") !== order) setOrder(
+      searchParams.get("order") === "asc" ? "asc" : "desc"
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, city, degree, sort, order]);
+  }, [searchParams]);
 
   // Handlers for filter/sort controls
-  const handleInput = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    setter(e.target.value);
+  const handleInput = (key: "name" | "city" | "degree") => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFilterState({ [key]: e.target.value });
+  };
+  // Fuzzy search handler: parse input and update fields
+  const handleFuzzySearch = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // Simple parsing: split by space, assign to fields in order (name, city, degree)
+    // For a more advanced UI, use chips or separate fields, but here we keep it simple
+    const value = search.trim();
+    const [n, c, d] = value.split(" ");
+    setFilterState({
+      name: n || "",
+      city: c || "",
+      degree: d || "",
+    });
   };
   const handleSort = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSort(e.target.value);
+    setFilterState({ sort: e.target.value });
   };
   const handleOrder = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setOrder(e.target.value as "asc" | "desc");
+    setFilterState({ order: e.target.value as "asc" | "desc" });
   };
   const handleReset = () => {
-    setName("");
-    setCity("");
-    setDegree("");
-    setSort("createdAt");
-    setOrder("desc");
+    setFilterState({
+      name: "",
+      city: "",
+      degree: "",
+      sort: "createdAt",
+      order: "desc",
+      page: 1,
+    });
   };
 
   // Pagination controls
-  const prevPage = () => setPage((p) => Math.max(1, p - 1));
-  const nextPage = () => setPage((p) => Math.min(totalPages, p + 1));
+  const prevPage = () => {
+    if (page > 1) setFilterState({ page: page - 1 });
+  };
+  const nextPage = () => {
+    if (page < totalPages) setFilterState({ page: page + 1 });
+  };
+
+  // Direct page navigation
+  const handlePageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = Number(e.target.value);
+    if (!isNaN(val) && val >= 1 && val <= totalPages) {
+      setFilterState({ page: val });
+    }
+  };
+
+  // Page number buttons (for up to 7 pages, else show window)
+  const renderPageNumbers = () => {
+    const pages = [];
+    let start = Math.max(1, page - 2);
+    let end = Math.min(totalPages, page + 2);
+    if (page <= 3) {
+      end = Math.min(5, totalPages);
+    }
+    if (page >= totalPages - 2) {
+      start = Math.max(1, totalPages - 4);
+    }
+    for (let i = start; i <= end; i++) {
+      pages.push(
+        <button
+          key={i}
+          onClick={() => setFilterState({ page: i })}
+          disabled={i === page || loading}
+          className={`px-3 py-1 rounded ${i === page ? "bg-solace-gold text-black font-bold" : "bg-solace-green text-white"} font-medium disabled:bg-gray-300 disabled:text-gray-500`}
+        >
+          {i}
+        </button>
+      );
+    }
+    return pages;
+  };
 
   return (
     <>
@@ -105,117 +251,215 @@ export default function Home() {
           <p className="text-lg text-text-color-secondary mb-8 text-center">
             Find the right advocate for your needs.
           </p>
-          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-            <div className="flex flex-col gap-4 gap-y-6 md:flex-row md:items-end">
-              <div className="flex-1 flex flex-col md:flex-row gap-4">
-                <div className="flex-1">
-                  <label htmlFor="name" className="block text-sm font-medium text-text-color-secondary mb-1">
-                    Name
-                  </label>
-                  <input
-                    id="name"
-                    type="text"
-                    className="w-full border border-solace-green rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-solace-gold transition text-text-color-secondary"
-                    placeholder="Search by name"
-                    value={name}
-                    onChange={handleInput(setName)}
-                  />
-                </div>
-                <div className="flex-1">
-                  <label htmlFor="city" className="block text-sm font-medium text-text-color-secondary mb-1">
-                    City
-                  </label>
-                  <input
-                    id="city"
-                    type="text"
-                    className="w-full border border-solace-green rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-solace-gold transition text-text-color-secondary"
-                    placeholder="Search by city"
-                    value={city}
-                    onChange={handleInput(setCity)}
-                  />
-                </div>
-                <div className="flex-1">
-                  <label htmlFor="degree" className="block text-sm font-medium text-text-color-secondary mb-1">
-                    Degree
-                  </label>
-                  <input
-                    id="degree"
-                    type="text"
-                    className="w-full border border-solace-green rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-solace-gold transition text-text-color-secondary"
-                    placeholder="Search by degree"
-                    value={degree}
-                    onChange={handleInput(setDegree)}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-row gap-4 items-end mt-4 md:mt-0">
-                <div>
-                  <label htmlFor="sort" className="block text-sm font-medium text-text-color-secondary mb-1">
-                    Sort By
-                  </label>
-                  <select
-                    id="sort"
-                    className="border border-solace-green rounded-md px-2 py-2"
-                    value={sort}
-                    onChange={handleSort}
-                  >
-                    {SORT_FIELDS.map((f) => (
-                      <option key={f.value} value={f.value}>{f.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="order" className="block text-sm font-medium text-text-color-secondary mb-1">
-                    Order
-                  </label>
-                  <select
-                    id="order"
-                    className="border border-solace-green rounded-md px-2 py-2"
-                    value={order}
-                    onChange={handleOrder}
-                  >
-                    <option value="asc">Asc</option>
-                    <option value="desc">Desc</option>
-                  </select>
-                </div>
-                <button
-                  onClick={handleReset}
-                  className="h-12 bg-solace-green text-text-color-white font-medium px-6 py-2 rounded-md shadow hover:bg-solace-green/90 focus:outline-none focus:ring-2 focus:ring-solace-gold transition whitespace-nowrap"
-                  type="button"
+          {/* Fuzzy Search Bar */}
+          <div className="mb-8">
+            <form
+              onSubmit={handleFuzzySearch}
+              className="flex flex-col md:flex-row items-center gap-4 w-full"
+              role="search"
+              aria-label="Fuzzy search advocates"
+            >
+              <div className="flex-1 flex items-center bg-white border-2 border-solace-green rounded-lg shadow-lg px-4 py-3 focus-within:ring-2 focus-within:ring-solace-gold transition">
+                {/* Inline search icon (magnifying glass) */}
+                <svg
+                  className="text-solace-green mr-3 w-6 h-6"
+                  aria-hidden="true"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
                 >
-                  Reset
+                  <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                  <line x1="16.65" y1="16.65" x2="21" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search by name, city, or degree"
+                  className="flex-1 text-lg border-none outline-none focus:ring-0 bg-transparent"
+                  aria-label="Search by name, city, or degree"
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  className="ml-3 px-6 py-2 text-lg font-semibold bg-solace-gold text-black rounded-md shadow hover:bg-solace-gold/90 focus:outline-none focus:ring-2 focus:ring-solace-green"
+                  aria-label="Search"
+                >
+                  <span className="flex items-center gap-2">
+                    {/* Inline search icon (smaller) */}
+                    <svg
+                      className="w-5 h-5"
+                      aria-hidden="true"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                      <line x1="16.65" y1="16.65" x2="21" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                    Search
+                  </span>
                 </button>
+              </div>
+              <button
+                onClick={handleReset}
+                className="h-12 bg-solace-green text-text-color-white font-medium px-6 py-2 rounded-md shadow hover:bg-solace-green/90 focus:outline-none focus:ring-2 focus:ring-solace-gold transition whitespace-nowrap"
+                type="button"
+                aria-label="Reset filters"
+              >
+                Reset
+              </button>
+            </form>
+          </div>
+          {/* Filters and sort controls */}
+          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+            <div className="flex flex-row gap-4 items-end">
+              <div>
+                <label htmlFor="sort" className="block text-sm font-medium text-text-color-secondary mb-1">
+                  Sort By
+                </label>
+                <select
+                  id="sort"
+                  className="border border-solace-green rounded-md px-2 py-2"
+                  value={sort}
+                  onChange={handleSort}
+                  aria-label="Sort by"
+                >
+                  {SORT_FIELDS.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="order" className="block text-sm font-medium text-text-color-secondary mb-1">
+                  Order
+                </label>
+                <select
+                  id="order"
+                  className="border border-solace-green rounded-md px-2 py-2"
+                  value={order}
+                  onChange={handleOrder}
+                  aria-label="Sort order"
+                >
+                  <option value="asc">Asc</option>
+                  <option value="desc">Desc</option>
+                </select>
               </div>
             </div>
           </div>
           <div className="overflow-x-auto rounded-lg shadow min-h-[200px]">
-            {loading ? (
-              <div className="flex justify-center items-center py-12">
-                <span className="text-solace-green font-semibold text-lg">Loading advocates...</span>
+            {error && (
+              <div className="flex justify-center items-center py-6">
+                <span className="text-red-600 font-semibold text-lg">{error}</span>
+              </div>
+            )}
+            {loading && !error ? (
+              <div className="flex flex-col justify-center items-center py-12 min-h-[200px] w-full">
+                {/* Animated horizontal loading bar */}
+                <div className="w-full max-w-md flex flex-col items-center">
+                  <div className="relative w-full h-2 bg-gray-200 rounded overflow-hidden mb-6">
+                    <div className="absolute left-0 top-0 h-2 w-1/3 bg-solace-green animate-[loading-bar_1.2s_ease-in-out_infinite] rounded" />
+                  </div>
+                  <span className="text-solace-green font-semibold text-lg text-center">
+                    searching for advocates
+                  </span>
+                </div>
+                {/* Tailwind animation keyframes (add to globals.css if not present):
+                  @keyframes loading-bar {
+                    0% { left: -33%; width: 33%; }
+                    50% { left: 33%; width: 33%; }
+                    100% { left: 100%; width: 33%; }
+                  }
+                */}
               </div>
             ) : (
               <table className="min-w-full bg-white rounded-lg">
                 <thead>
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light">
+                    <th
+                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light cursor-pointer select-none"
+                      role="columnheader"
+                      aria-sort={sort === "firstName" ? (order === "asc" ? "ascending" : "descending") : "none"}
+                      tabIndex={0}
+                      onClick={() => setFilterState({ sort: "firstName", order: sort === "firstName" && order === "asc" ? "desc" : "asc" })}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setFilterState({ sort: "firstName", order: sort === "firstName" && order === "asc" ? "desc" : "asc" }); }}
+                      aria-label="Sort by First Name"
+                    >
                       First Name
+                      {sort === "firstName" && (
+                        <span aria-hidden="true" className="ml-1">{order === "asc" ? "▲" : "▼"}</span>
+                      )}
                     </th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light">
+                    <th
+                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light cursor-pointer select-none"
+                      role="columnheader"
+                      aria-sort={sort === "lastName" ? (order === "asc" ? "ascending" : "descending") : "none"}
+                      tabIndex={0}
+                      onClick={() => setFilterState({ sort: "lastName", order: sort === "lastName" && order === "asc" ? "desc" : "asc" })}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setFilterState({ sort: "lastName", order: sort === "lastName" && order === "asc" ? "desc" : "asc" }); }}
+                      aria-label="Sort by Last Name"
+                    >
                       Last Name
+                      {sort === "lastName" && (
+                        <span aria-hidden="true" className="ml-1">{order === "asc" ? "▲" : "▼"}</span>
+                      )}
                     </th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light">
+                    <th
+                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light cursor-pointer select-none"
+                      role="columnheader"
+                      aria-sort={sort === "city" ? (order === "asc" ? "ascending" : "descending") : "none"}
+                      tabIndex={0}
+                      onClick={() => setFilterState({ sort: "city", order: sort === "city" && order === "asc" ? "desc" : "asc" })}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setFilterState({ sort: "city", order: sort === "city" && order === "asc" ? "desc" : "asc" }); }}
+                      aria-label="Sort by City"
+                    >
                       City
+                      {sort === "city" && (
+                        <span aria-hidden="true" className="ml-1">{order === "asc" ? "▲" : "▼"}</span>
+                      )}
                     </th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light">
+                    <th
+                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light cursor-pointer select-none"
+                      role="columnheader"
+                      aria-sort={sort === "degree" ? (order === "asc" ? "ascending" : "descending") : "none"}
+                      tabIndex={0}
+                      onClick={() => setFilterState({ sort: "degree", order: sort === "degree" && order === "asc" ? "desc" : "asc" })}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setFilterState({ sort: "degree", order: sort === "degree" && order === "asc" ? "desc" : "asc" }); }}
+                      aria-label="Sort by Degree"
+                    >
                       Degree
+                      {sort === "degree" && (
+                        <span aria-hidden="true" className="ml-1">{order === "asc" ? "▲" : "▼"}</span>
+                      )}
                     </th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light">
+                    <th
+                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light"
+                      role="columnheader"
+                      aria-label="Specialties"
+                    >
                       Specialties
                     </th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light">
+                    <th
+                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light cursor-pointer select-none"
+                      role="columnheader"
+                      aria-sort={sort === "yearsOfExperience" ? (order === "asc" ? "ascending" : "descending") : "none"}
+                      tabIndex={0}
+                      onClick={() => setFilterState({ sort: "yearsOfExperience", order: sort === "yearsOfExperience" && order === "asc" ? "desc" : "asc" })}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") setFilterState({ sort: "yearsOfExperience", order: sort === "yearsOfExperience" && order === "asc" ? "desc" : "asc" }); }}
+                      aria-label="Sort by Years of Experience"
+                    >
                       Years of Experience
+                      {sort === "yearsOfExperience" && (
+                        <span aria-hidden="true" className="ml-1">{order === "asc" ? "▲" : "▼"}</span>
+                      )}
                     </th>
-                    <th className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light w-[200px]">
+                    <th
+                      className="px-4 py-3 text-left text-sm font-semibold text-solace-green bg-solace-green-light w-[200px]"
+                      role="columnheader"
+                      aria-label="Phone Number"
+                    >
                       Phone Number
                     </th>
                   </tr>
@@ -256,10 +500,13 @@ export default function Home() {
                       </td>
                     </tr>
                   ))}
-                  {advocates.length === 0 && !loading && (
+                  {advocates.length === 0 && !loading && !error && (
                     <tr>
                       <td colSpan={7} className="px-4 py-6 text-center text-text-color-muted">
-                        No advocates found.
+                        <span className="block text-lg font-semibold mb-2">No advocates found.</span>
+                        <span className="block text-base text-text-color-secondary">
+                          Try expanding your search criteria to see more results.
+                        </span>
                       </td>
                     </tr>
                   )}
@@ -268,11 +515,11 @@ export default function Home() {
             )}
           </div>
           {/* Pagination controls */}
-          <div className="flex justify-between items-center mt-6">
+          <div className="flex flex-col md:flex-row justify-between items-center mt-6 gap-4">
             <div className="text-sm text-text-color-secondary">
               Page {page} of {totalPages} ({total} total results)
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 items-center">
               <button
                 onClick={prevPage}
                 disabled={page === 1 || loading}
@@ -280,6 +527,7 @@ export default function Home() {
               >
                 Previous
               </button>
+              {renderPageNumbers()}
               <button
                 onClick={nextPage}
                 disabled={page === totalPages || loading}
@@ -287,6 +535,16 @@ export default function Home() {
               >
                 Next
               </button>
+              <span className="ml-2 text-sm">Go to page:</span>
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                value={page}
+                onChange={handlePageInput}
+                className="w-16 border border-solace-green rounded-md px-2 py-1 text-center"
+                disabled={loading || totalPages < 2}
+              />
             </div>
           </div>
         </div>
