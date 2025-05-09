@@ -336,15 +336,15 @@ function PageContent() {
           </div>
           {/* Filters and sort controls */}
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-            <div className="flex flex-row justify-between items-end"> {/* Changed to justify-between */}
+            <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 md:gap-0"> {/* Changed to justify-between */}
               {/* Specialty Filter Dropdown */}
-              <div>
+              <div className="w-full md:w-auto">
                 <label htmlFor="specialty" className="block text-sm font-medium text-text-color-secondary mb-1">
                   Filter by Specialty
                 </label>
                 <select
                   id="specialty"
-                  className="border border-solace-green rounded-md px-2 py-2"
+                  className="border border-solace-green rounded-md px-2 py-2 w-full"
                   value={selectedSpecialty}
                   onChange={handleSpecialtyChange}
                   aria-label="Filter by specialty"
@@ -356,14 +356,14 @@ function PageContent() {
               </div>
 
               {/* Sort and Order Controls Group - Pushed to the right */}
-              <div className="flex flex-row gap-4 items-end">
-                <div>
+              <div className="flex flex-col sm:flex-row sm:gap-4 items-stretch sm:items-end w-full md:w-auto gap-4">
+                <div className="w-full sm:w-auto">
                   <label htmlFor="sort" className="block text-sm font-medium text-text-color-secondary mb-1">
                     Sort By
                   </label>
                   <select
                     id="sort"
-                    className="border border-solace-green rounded-md px-2 py-2"
+                    className="border border-solace-green rounded-md px-2 py-2 w-full"
                     value={sort}
                     onChange={handleSort}
                     aria-label="Sort by"
@@ -373,13 +373,13 @@ function PageContent() {
                     ))}
                   </select>
                 </div>
-                <div>
+                <div className="w-full sm:w-auto">
                   <label htmlFor="order" className="block text-sm font-medium text-text-color-secondary mb-1">
                     Order
                   </label>
                   <select
                     id="order"
-                    className="border border-solace-green rounded-md px-2 py-2"
+                    className="border border-solace-green rounded-md px-2 py-2 w-full"
                     value={order}
                     onChange={handleOrder}
                     aria-label="Sort order"
