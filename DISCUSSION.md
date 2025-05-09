@@ -14,3 +14,4 @@ UI customizations:
 - Add filtering
 - Add loading states
 - Add error states
+- Convert specialties and degrees into enums for better type safety
